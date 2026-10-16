@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# Print a flag and its country name in the terminal.
+# Inspired by pokemon-colorscripts. Works with the bash 3.2 that ships with macOS.
+
+set -u
+
+usage() {
+    cat <<USAGE
+Usage: flag-colorscript [options]
+
+Print a random flag (default) or a specific one with its country name.
+
+Options:
+  -r, --random          Show a random flag (default)
+  -n, --name CODE|NAME  Show a specific flag, by ISO code (br, gb-sct)
+                        or by name (case-insensitive, e.g. "new zealand")
+  -s, --size SIZE       small, regular (default) or large
+  -l, --list            List all codes and country names
+      --no-title        Do not print the country name
+  -h, --help            Show this help
+
+Environment:
+  FLAG_COLORSCRIPT_SIZE  Default size when --size is not given
+USAGE
+}
+
+# Resolve the real location of this script, following symlinks
+# (macOS readlink has no -f before 12.3).
+src="$0"
+while [ -L "$src" ]; do
+    dir="$(cd -P "$(dirname "$src")" && pwd)"
+    src="$(readlink "$src")"
+    case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+done
+ROOT="${FLAG_COLORSCRIPT_DIR:-$(cd -P "$(dirname "$src")" && pwd)}"
+NAMES="$ROOT/names.tsv"
+
+size="${FLAG_COLORSCRIPT_SIZE:-regular}"
+query=""
+title=1
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -r|--random) query="" ;;
+        -n|--name)
+            [ $# -ge 2 ] || { echo "flag-colorscript: $1 needs an argument" >&2; exit 2; }
+            query="$2"; shift ;;
+        -s|--size)
+            [ $# -ge 2 ] || { echo "flag-colorscript: $1 needs an argument" >&2; exit 2; }
+            size="$2"; shift ;;
+        -l|--list) sort -t "$(printf '\t')" -k2 "$NAMES" | awk -F '\t' '{ printf "%-8s %s\n", $1, $2 }'; exit 0 ;;
+        --no-title) title=0 ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "flag-colorscript: unknown option: $1" >&2; usage >&2; exit 2 ;;
+    esac
+    shift
+done
+
+dir="$ROOT/colorscripts/$size"
+if [ ! -d "$dir" ]; then
+    echo "flag-colorscript: unknown size '$size' (small, regular, large)" >&2
+    exit 2
+fi
+
+if [ -z "$query" ]; then
+    # Pick a random line from names.tsv.
+    count=$(wc -l < "$NAMES")
+    n=$(( (RANDOM * 32768 + RANDOM) % count + 1 ))
+    line=$(sed -n "${n}p" "$NAMES")
+else
+    q=$(printf '%s' "$query" | tr '[:upper:]' '[:lower:]')
+    line=$(awk -F '\t' -v q="$q" '
+        tolower($1) == q { print; found = 1; exit }
+        tolower($2) == q && !byname { byname = $0 }
+        END { if (!found && byname) print byname }
+    ' "$NAMES")
+    if [ -z "$line" ]; then
+        echo "flag-colorscript: no flag found for '$query' (try --list)" >&2
+        exit 1
+    fi
+fi
+
+code="${line%%	*}"
+name="${line#*	}"
+
+[ "$title" -eq 1 ] && printf '\033[1m%s\033[0m\n' "$name"
+cat "$dir/$code"
